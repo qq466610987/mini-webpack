@@ -1,21 +1,29 @@
 import fs from 'fs'
 import parse from '@babel/parser'
 import traverse from '@babel/traverse'
-import { transformFromAst } from '@babel/core'
+import { transformFromAst, transformFromAstSync } from '@babel/core'
 import path from 'path';
 import ejs from 'ejs'
+import jsonLoader from './jsonLoader.js'
 
 let ID = 0;
-/**
- * 
- * @param {*} filePath  文件路径
- * @returns 该文件的依赖关系
- */
+
 interface Asset {
   id: number,
   filePath: string,
   code: any,
   deps: string[],
+}
+
+const webpackConfig = {
+  module: {
+    rules: [
+      {
+        test: /\.json$/,
+        use: jsonLoader
+      },
+    ],
+  },
 }
 /**
  * 根据文件路径解析相应文件，
@@ -26,33 +34,35 @@ interface Asset {
  */
 function createAsset(filePath: string): Asset {
   // 1.获取文件内容
-  // ast
-  const source = fs.readFileSync(filePath, {
+  let source = fs.readFileSync(filePath, {
     encoding: 'utf-8'
   })
-  // console.log(source)
+
+  // 处理loader
+  const loaders = webpackConfig.module.rules
+  loaders.forEach(({test,use}) => {
+      if(new RegExp(test).test(filePath)){
+        source = use(source)
+      }
+  })
+
   // 编译为ast
   const ast = parse.parse(source, {
     sourceType: 'module'
   })
   const deps: string[] = []
   // 遍历ast，并获取依赖项
-  traverse(ast, {
+  traverse.default(ast, {
     ImportDeclaration({ node }) {
-      // console.log('------------')
-      // console.log(node.source.value)
       deps.push(node.source.value)
     }
   })
   const id = ID++;
-  // 从ast转为源码
-  let code
-  transformFromAst(ast, undefined, {
+  // 从ast转为源码, 这里主要是为了将代码中es6模块转为commonjs模块
+  let {code} = transformFromAstSync(ast, undefined, {
     presets: ["@babel/preset-env"]
-  }, (err, result) => {
-    code = result?.code
-  })
-
+  })!
+ 
   return {
     id,
     filePath,
@@ -61,7 +71,7 @@ function createAsset(filePath: string): Asset {
   }
 }
 
-interface Graph extends Asset{
+interface Graph extends Asset {
   mapping: {
     [key: string]: number
   }
@@ -87,6 +97,7 @@ function createGraph(entry: string) {
       const absolutePath = path.resolve(dirname, relativePath)
       const child = createAsset(absolutePath)
       asset.mapping[relativePath] = child.id
+      // @ts-ignore
       queue.push(child)
     })
   }
