@@ -5,6 +5,8 @@ import { transformFromAstSync } from '@babel/core';
 import path from 'path';
 import ejs from 'ejs';
 import jsonLoader from './jsonLoader.js';
+import ChangeOutputPath from './changeOutputPath.js';
+import { SyncHook } from 'tapable';
 let ID = 0;
 const webpackConfig = {
     module: {
@@ -15,7 +17,18 @@ const webpackConfig = {
             },
         ],
     },
+    plugin: [new ChangeOutputPath()]
 };
+const hooks = {
+    emitFile: new SyncHook()
+};
+function initPlugin() {
+    const plugins = webpackConfig.plugin;
+    plugins.forEach(plugin => {
+        plugin.apply(hooks);
+    });
+}
+initPlugin();
 /**
  * 根据文件路径解析相应文件，
  * 并返回该文件所依赖的“内容”
@@ -96,6 +109,7 @@ function build(graph) {
         };
     });
     const code = ejs.render(template, { data });
+    hooks.emitFile.call();
     fs.writeFileSync('./dist/bundle.js', code);
 }
 const graph = createGraph('./example/main.js');
